@@ -737,6 +737,13 @@ app.put("/api/contact", async (req, res) => {
   }
 });
 
+// Root route so hitting the server base URL returns something useful
+app.get("/", (_req, res) => {
+  res.send(
+    "BlooMery Flower Shop API is running. Use the React frontend build (dist/index.html) for the UI, and /api/* endpoints for data."
+  );
+});
+
 app.get("/api/health", async (_req, res) => {
   try {
     await select("SELECT 1 AS ok");
