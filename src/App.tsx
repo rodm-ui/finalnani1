@@ -9,7 +9,8 @@ type User = {
   name: string;
   email: string;
   role: Role;
-  password: string;
+  // Password is only used locally (e.g. at registration); it is not returned from the API
+  password?: string;
 };
 
 type Category = {
@@ -102,10 +103,6 @@ function saveToStorage<T>(key: string, value: T) {
   }
 }
 
-function generateId(prefix: string) {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`;
-}
-
 function formatPhp(value: number) {
   return value.toLocaleString("en-PH", {
     style: "currency",
@@ -114,72 +111,7 @@ function formatPhp(value: number) {
   });
 }
 
-// --- Initial data ---
-
-const defaultCategories: Category[] = [
-  {
-    id: "romantic",
-    name: "Romantic Bouquets",
-    description: "Roses and blooms for anniversaries and date nights.",
-  },
-  {
-    id: "birthday",
-    name: "Birthday Bouquets",
-    description: "Bright arrangements to celebrate special days.",
-  },
-  {
-    id: "sympathy",
-    name: "Sympathy & Get Well",
-    description: "Soft, comforting bouquets for thoughtful support.",
-  },
-  {
-    id: "custom",
-    name: "Custom Creations",
-    description: "Design-your-own floral stories.",
-  },
-];
-
-const defaultProducts: Product[] = [
-  {
-    id: "rosy-dreams",
-    name: "Rosy Dreams Bouquet",
-    description: "A classic dozen red roses with eucalyptus and baby's breath.",
-    pricePhp: 1899,
-    imageUrl:
-      "https://images.pexels.com/photos/1028725/pexels-photo-1028725.jpeg?auto=compress&cs=tinysrgb&w=800",
-    categoryId: "romantic",
-    isFeatured: true,
-  },
-  {
-    id: "sunrise-smiles",
-    name: "Sunrise Smiles",
-    description: "Sunflowers and gerberas wrapped in kraft paper for a bright surprise.",
-    pricePhp: 1499,
-    imageUrl:
-      "https://images.pexels.com/photos/139252/pexels-photo-139252.jpeg?auto=compress&cs=tinysrgb&w=800",
-    categoryId: "birthday",
-    isFeatured: true,
-  },
-  {
-    id: "gentle-comfort",
-    name: "Gentle Comfort",
-    description: "White lilies, mums, and foliage in a soft pastel wrap.",
-    pricePhp: 1599,
-    imageUrl:
-      "https://images.pexels.com/photos/21227/pexels-photo.jpg?auto=compress&cs=tinysrgb&w=800",
-    categoryId: "sympathy",
-  },
-  {
-    id: "bloomery-signature",
-    name: "BlooMery Signature Box",
-    description: "Curated seasonal blooms in a BlooMery keepsake box.",
-    pricePhp: 2299,
-    imageUrl:
-      "https://images.pexels.com/photos/931162/pexels-photo-931162.jpeg?auto=compress&cs=tinysrgb&w=800",
-    categoryId: "custom",
-    isFeatured: true,
-  },
-];
+// --- Initial data (design defaults only; actual records come from the database) ---
 
 const defaultSettings: AppearanceSettings = {
   primaryColor: "rose-600",
@@ -202,46 +134,89 @@ function classNames(...classes: Array<string | boolean | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
+// --- API helpers ---
+
+// Support configuring an explicit API base URL (e.g. when frontend and backend are on different hosts)
+const RAW_API_BASE_URL =
+  (typeof import.meta !== "undefined" &&
+    (import.meta as any).env &&
+    (import.meta as any).env.VITE_API_BASE_URL) ||
+  "";
+
+// Normalized base URL without trailing slash; empty string means "same origin"
+const apiBase = RAW_API_BASE_URL
+  ? String(RAW_API_BASE_URL).replace(/\/+$/, "")
+  : "";
+
+async function apiGet<T>(path: string): Promise<T> {
+  const res = await fetch(`${apiBase}${path}`);
+  if (!res.ok) {
+    throw new Error(`GET ${path} failed with status ${res.status}`);
+  }
+  return (await res.json()) as T;
+}
+
+async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${apiBase}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`POST ${path} failed: ${text || res.status}`);
+  }
+  return (await res.json()) as T;
+}
+
+async function apiPut<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${apiBase}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`PUT ${path} failed: ${text || res.status}`);
+  }
+  return (await res.json()) as T;
+}
+
+async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${apiBase}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`PATCH ${path} failed: ${text || res.status}`);
+  }
+  return (await res.json()) as T;
+}
+
+async function apiDelete(path: string): Promise<void> {
+  const res = await fetch(`${apiBase}${path}`, {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 204) {
+    const text = await res.text();
+    throw new Error(`DELETE ${path} failed: ${text || res.status}`);
+  }
+}
+
 // --- Auth & main app ---
 
 export default function App() {
-  const [users, setUsers] = useState<User[]>(() => {
-    const existing = loadFromStorage<User[]>(STORAGE_KEYS.users, []);
-    if (!existing.some((u) => u.role === "admin")) {
-      const admin: User = {
-        id: generateId("user"),
-        name: "BlooMery Admin",
-        email: "admin@bloomery.ph",
-        role: "admin",
-        password: "admin123",
-      };
-      const updated = [...existing, admin];
-      saveToStorage(STORAGE_KEYS.users, updated);
-      return updated;
-    }
-    return existing;
-  });
+  // Data loaded from the backend (Aiven MySQL via the Node API)
+  const [users, setUsers] = useState<User[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [settings, setSettings] = useState<AppearanceSettings | null>(null);
+  const [contact, setContact] = useState<ContactInfo | null>(null);
 
-  const [categories, setCategories] = useState<Category[]>(() =>
-    loadFromStorage<Category[]>(STORAGE_KEYS.categories, defaultCategories)
-  );
-
-  const [products, setProducts] = useState<Product[]>(() =>
-    loadFromStorage<Product[]>(STORAGE_KEYS.products, defaultProducts)
-  );
-
-  const [orders, setOrders] = useState<Order[]>(() =>
-    loadFromStorage<Order[]>(STORAGE_KEYS.orders, [])
-  );
-
-  const [settings, setSettings] = useState<AppearanceSettings>(() =>
-    loadFromStorage<AppearanceSettings>(STORAGE_KEYS.settings, defaultSettings)
-  );
-
-  const [contact, setContact] = useState<ContactInfo>(() =>
-    loadFromStorage<ContactInfo>(STORAGE_KEYS.contact, defaultContact)
-  );
-
+  // Auth state (current user is persisted locally so refresh keeps session)
   const [currentUser, setCurrentUser] = useState<User | null>(() =>
     loadFromStorage<User | null>(STORAGE_KEYS.currentUser, null)
   );
@@ -252,35 +227,47 @@ export default function App() {
 
   const [authError, setAuthError] = useState<string | null>(null);
   const [justPlacedOrderId, setJustPlacedOrderId] = useState<string | null>(null);
+  const [backendStatus, setBackendStatus] = useState<"checking" | "ok" | "error">(
+    "checking"
+  );
+  const [backendErrorMessage, setBackendErrorMessage] = useState<string | null>(
+    null
+  );
+  const [isLoadingData, setIsLoadingData] = useState(false);
 
-  // Persist core state
-  useEffect(() => {
-    saveToStorage(STORAGE_KEYS.users, users);
-  }, [users]);
-
-  useEffect(() => {
-    saveToStorage(STORAGE_KEYS.categories, categories);
-  }, [categories]);
-
-  useEffect(() => {
-    saveToStorage(STORAGE_KEYS.products, products);
-  }, [products]);
-
-  useEffect(() => {
-    saveToStorage(STORAGE_KEYS.orders, orders);
-  }, [orders]);
-
-  useEffect(() => {
-    saveToStorage(STORAGE_KEYS.settings, settings);
-  }, [settings]);
-
-  useEffect(() => {
-    saveToStorage(STORAGE_KEYS.contact, contact);
-  }, [contact]);
-
+  // Persist only the current user locally so a refresh keeps the session
   useEffect(() => {
     saveToStorage(STORAGE_KEYS.currentUser, currentUser);
   }, [currentUser]);
+
+  // Initial health check & load basic configuration (appearance + contact)
+  useEffect(() => {
+    async function init() {
+      try {
+        setBackendStatus("checking");
+        setBackendErrorMessage(null);
+
+        await apiGet<{ status: string }>("/api/health");
+
+        const [settingsData, contactData] = await Promise.all([
+          apiGet<AppearanceSettings>("/api/settings"),
+          apiGet<ContactInfo>("/api/contact"),
+        ]);
+
+        setSettings(settingsData);
+        setContact(contactData);
+        setBackendStatus("ok");
+      } catch (error) {
+        console.error("Error initialising backend connection", error);
+        setBackendStatus("error");
+        setBackendErrorMessage(
+          "Unable to connect to BlooMery database/API. Please verify your Aiven MySQL configuration and try again."
+        );
+      }
+    }
+
+    init();
+  }, []);
 
   const featuredProducts = useMemo(
     () => products.filter((p) => p.isFeatured),
@@ -293,40 +280,166 @@ export default function App() {
     return orders.filter((o) => o.customerId === currentUser.id);
   }, [orders, currentUser]);
 
-  function handleLogin(email: string, password: string) {
-    const found = users.find(
-      (u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password
-    );
-    if (!found) {
-      setAuthError("Invalid email or password.");
-      return;
+  // Load products, categories, orders and (for admins) users from the backend
+  async function loadDataForUser(user: User) {
+    try {
+      setIsLoadingData(true);
+      setBackendErrorMessage(null);
+
+      const [categoriesRaw, productsRaw, ordersRaw, usersRaw] = await Promise.all([
+        apiGet<any[]>("/api/categories"),
+        apiGet<any[]>("/api/products"),
+        apiGet<any[]>(
+          user.role === "admin"
+            ? "/api/orders"
+            : `/api/orders?customerId=${encodeURIComponent(user.id)}`
+        ),
+        user.role === "admin" ? apiGet<any[]>("/api/users") : Promise.resolve([]),
+      ]);
+
+      setCategories(
+        categoriesRaw.map((c: any): Category => ({
+          id: String(c.id),
+          name: c.name,
+          description: c.description ?? undefined,
+        }))
+      );
+
+      setProducts(
+        productsRaw.map((p: any): Product => ({
+          id: String(p.id),
+          name: p.name,
+          description: p.description,
+          pricePhp: Number(p.pricePhp ?? p.price_php ?? 0),
+          imageUrl: p.imageUrl ?? p.image_url ?? "",
+          categoryId: String(p.categoryId ?? p.category_id),
+          isFeatured: Boolean(p.isFeatured ?? p.is_featured),
+        }))
+      );
+
+      setOrders(
+        ordersRaw.map((o: any): Order => ({
+          id: String(o.id),
+          customerId: String(o.customerId ?? o.customer_id),
+          customerName: o.customerName ?? o.customer_name,
+          totalAmountPhp: Number(o.totalAmountPhp ?? o.total_amount_php ?? 0),
+          paymentMethod: o.paymentMethod,
+          orderType: o.orderType,
+          status: o.status,
+          note: o.note ?? undefined,
+          deliveryAddress: o.deliveryAddress ?? undefined,
+          createdAt: o.createdAt ?? o.created_at,
+          items: (o.items || []).map((item: any): OrderItem => ({
+            productId: String(item.productId ?? item.product_id),
+            quantity: Number(item.quantity ?? 0),
+            unitPricePhp: Number(item.unitPricePhp ?? item.unit_price_php ?? 0),
+          })),
+        }))
+      );
+
+      if (user.role === "admin") {
+        setUsers(
+          usersRaw.map((u: any): User => ({
+            id: String(u.id),
+            name: u.name,
+            email: u.email,
+            role: u.role,
+          }))
+        );
+      } else {
+        setUsers([]);
+      }
+
+      setBackendStatus("ok");
+    } catch (error) {
+      console.error("Error loading data for user", error);
+      setBackendStatus("error");
+      setBackendErrorMessage(
+        "Problem loading data from the BlooMery database. Please check Aiven MySQL and try again."
+      );
+    } finally {
+      setIsLoadingData(false);
     }
-    setCurrentUser(found);
-    setAuthError(null);
   }
 
-  function handleRegisterCustomer(name: string, email: string, password: string) {
-    if (users.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
-      setAuthError("An account with that email already exists.");
-      return;
+  // If a user is already stored locally (after refresh) and the backend is healthy,
+  // load their data from the database.
+  useEffect(() => {
+    if (!currentUser || backendStatus !== "ok") return;
+    if (categories.length || products.length || orders.length) return;
+    loadDataForUser(currentUser);
+  }, [currentUser, backendStatus]);
+
+  async function handleLogin(email: string, password: string) {
+    try {
+      setAuthError(null);
+      const response = await apiPost<{ user: any }>("/api/auth/login", {
+        email,
+        password,
+      });
+      const apiUser = response.user;
+      const user: User = {
+        id: String(apiUser.id),
+        name: apiUser.name,
+        email: apiUser.email,
+        role: apiUser.role,
+      };
+      setCurrentUser(user);
+      await loadDataForUser(user);
+    } catch (error: any) {
+      console.error("Login failed", error);
+      const message =
+        typeof error?.message === "string" &&
+        (error.message.includes("Invalid email or password") ||
+          error.message.includes("401"))
+          ? "Invalid email or password."
+          : "Unable to log in. Please ensure the API/database is running.";
+      setAuthError(message);
     }
-    const newUser: User = {
-      id: generateId("user"),
-      name,
-      email,
-      role: "customer",
-      password,
-    };
-    setUsers((prev) => [...prev, newUser]);
-    setCurrentUser(newUser);
-    setAuthError(null);
+  }
+
+  async function handleRegisterCustomer(
+    name: string,
+    email: string,
+    password: string
+  ) {
+    try {
+      setAuthError(null);
+      const response = await apiPost<{ user: any }>("/api/auth/register", {
+        name,
+        email,
+        password,
+      });
+      const apiUser = response.user;
+      const user: User = {
+        id: String(apiUser.id),
+        name: apiUser.name,
+        email: apiUser.email,
+        role: apiUser.role,
+      };
+      setCurrentUser(user);
+      await loadDataForUser(user);
+    } catch (error: any) {
+      console.error("Registration failed", error);
+      const message =
+        typeof error?.message === "string" &&
+        (error.message.includes("already in use") || error.message.includes("409"))
+          ? "An account with that email already exists."
+          : "Unable to create account. Please ensure the API/database is running.";
+      setAuthError(message);
+    }
   }
 
   function handleLogout() {
     setCurrentUser(null);
+    setUsers([]);
+    setCategories([]);
+    setProducts([]);
+    setOrders([]);
+    setJustPlacedOrderId(null);
   }
 
-  function handlePlaceOrder(input: {
+  async function handlePlaceOrder(input: {
     items: OrderItem[];
     paymentMethod: PaymentMethod;
     orderType: OrderType;
@@ -334,77 +447,237 @@ export default function App() {
     deliveryAddress?: string;
   }) {
     if (!currentUser) return;
-    const total = input.items.reduce(
-      (sum, item) => sum + item.quantity * item.unitPricePhp,
-      0
-    );
-    const order: Order = {
-      id: generateId("order"),
-      customerId: currentUser.id,
-      customerName: currentUser.name,
-      items: input.items,
-      totalAmountPhp: total,
-      paymentMethod: input.paymentMethod,
-      orderType: input.orderType,
-      status: "Pending",
-      note: input.note,
-      deliveryAddress: input.deliveryAddress,
-      createdAt: new Date().toISOString(),
-    };
-    setOrders((prev) => [order, ...prev]);
-    setJustPlacedOrderId(order.id);
+    try {
+      const payload = {
+        customerId: currentUser.id,
+        paymentMethod: input.paymentMethod,
+        orderType: input.orderType,
+        note: input.note,
+        deliveryAddress: input.deliveryAddress,
+        items: input.items.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPricePhp: item.unitPricePhp,
+        })),
+      };
+
+      const created = await apiPost<any>("/api/orders", payload);
+      const order: Order = {
+        id: String(created.id),
+        customerId: String(created.customerId ?? created.customer_id),
+        customerName: created.customerName ?? created.customer_name,
+        totalAmountPhp: Number(
+          created.totalAmountPhp ?? created.total_amount_php ?? 0
+        ),
+        paymentMethod: created.paymentMethod,
+        orderType: created.orderType,
+        status: created.status,
+        note: created.note ?? undefined,
+        deliveryAddress: created.deliveryAddress ?? undefined,
+        createdAt: created.createdAt ?? created.created_at,
+        items: (created.items || []).map((item: any): OrderItem => ({
+          productId: String(item.productId ?? item.product_id),
+          quantity: Number(item.quantity ?? 0),
+          unitPricePhp: Number(item.unitPricePhp ?? item.unit_price_php ?? 0),
+        })),
+      };
+      setOrders((prev) => [order, ...prev]);
+      setJustPlacedOrderId(order.id);
+      setBackendStatus("ok");
+    } catch (error) {
+      console.error("Place order failed", error);
+      setBackendStatus("error");
+      setBackendErrorMessage(
+        "Unable to place order. Please verify that the BlooMery database/API is available."
+      );
+    }
   }
 
-  function handleUpdateOrderStatus(orderId: string, status: OrderStatus) {
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === orderId
-          ? {
-              ...o,
-              status,
-            }
-          : o
-      )
-    );
+  async function handleUpdateOrderStatus(orderId: string, status: OrderStatus) {
+    try {
+      const updated = await apiPatch<any>(`/api/orders/${orderId}/status`, {
+        status,
+      });
+      const mapped: Order = {
+        id: String(updated.id),
+        customerId: String(updated.customerId ?? updated.customer_id),
+        customerName: updated.customerName ?? updated.customer_name,
+        totalAmountPhp: Number(
+          updated.totalAmountPhp ?? updated.total_amount_php ?? 0
+        ),
+        paymentMethod: updated.paymentMethod,
+        orderType: updated.orderType,
+        status: updated.status,
+        note: updated.note ?? undefined,
+        deliveryAddress: updated.deliveryAddress ?? undefined,
+        createdAt: updated.createdAt ?? updated.created_at,
+        items: (updated.items || []).map((item: any): OrderItem => ({
+          productId: String(item.productId ?? item.product_id),
+          quantity: Number(item.quantity ?? 0),
+          unitPricePhp: Number(item.unitPricePhp ?? item.unit_price_php ?? 0),
+        })),
+      };
+      setOrders((prev) => prev.map((o) => (o.id === mapped.id ? mapped : o)));
+    } catch (error) {
+      console.error("Update order status failed", error);
+      setBackendStatus("error");
+      setBackendErrorMessage(
+        "Unable to update order status. Please verify that the BlooMery database/API is available."
+      );
+    }
   }
 
-  function handleUpsertCategory(category: Category) {
-    setCategories((prev) => {
-      const exists = prev.some((c) => c.id === category.id);
-      if (exists) return prev.map((c) => (c.id === category.id ? category : c));
-      return [...prev, category];
-    });
+  async function handleUpsertCategory(category: Category) {
+    try {
+      if (!category.id) {
+        // Create
+        const created = await apiPost<any>("/api/categories", {
+          name: category.name,
+          description: category.description ?? null,
+        });
+        const mapped: Category = {
+          id: String(created.id),
+          name: created.name,
+          description: created.description ?? undefined,
+        };
+        setCategories((prev) => [...prev, mapped]);
+      } else {
+        // Update
+        const updated = await apiPut<any>(`/api/categories/${category.id}`, {
+          name: category.name,
+          description: category.description ?? null,
+        });
+        const mapped: Category = {
+          id: String(updated.id),
+          name: updated.name,
+          description: updated.description ?? undefined,
+        };
+        setCategories((prev) =>
+          prev.map((c) => (c.id === mapped.id ? mapped : c))
+        );
+      }
+    } catch (error) {
+      console.error("Upsert category failed", error);
+      setBackendStatus("error");
+      setBackendErrorMessage(
+        "Unable to save category. Please verify that the BlooMery database/API is available."
+      );
+    }
   }
 
-  function handleDeleteCategory(id: string) {
-    setCategories((prev) => prev.filter((c) => c.id !== id));
-    setProducts((prev) => prev.filter((p) => p.categoryId !== id));
+  async function handleDeleteCategory(id: string) {
+    try {
+      await apiDelete(`/api/categories/${id}`);
+      setCategories((prev) => prev.filter((c) => c.id !== id));
+      setProducts((prev) => prev.filter((p) => p.categoryId !== id));
+    } catch (error) {
+      console.error("Delete category failed", error);
+      setBackendStatus("error");
+      setBackendErrorMessage(
+        "Unable to delete category. Please verify that the BlooMery database/API is available."
+      );
+    }
   }
 
-  function handleUpsertProduct(product: Product) {
-    setProducts((prev) => {
-      const exists = prev.some((p) => p.id === product.id);
-      if (exists) return prev.map((p) => (p.id === product.id ? product : p));
-      return [...prev, product];
-    });
+  async function handleUpsertProduct(product: Product) {
+    try {
+      if (!product.id) {
+        const created = await apiPost<any>("/api/products", {
+          categoryId: product.categoryId,
+          name: product.name,
+          description: product.description,
+          pricePhp: product.pricePhp,
+          imageUrl: product.imageUrl,
+          isFeatured: product.isFeatured,
+        });
+        const mapped: Product = {
+          id: String(created.id),
+          name: created.name,
+          description: created.description,
+          pricePhp: Number(created.pricePhp ?? created.price_php ?? 0),
+          imageUrl: created.imageUrl ?? created.image_url ?? "",
+          categoryId: String(created.categoryId ?? created.category_id),
+          isFeatured: Boolean(created.isFeatured ?? created.is_featured),
+        };
+        setProducts((prev) => [...prev, mapped]);
+      } else {
+        const updated = await apiPut<any>(`/api/products/${product.id}`, {
+          categoryId: product.categoryId,
+          name: product.name,
+          description: product.description,
+          pricePhp: product.pricePhp,
+          imageUrl: product.imageUrl,
+          isFeatured: product.isFeatured,
+        });
+        const mapped: Product = {
+          id: String(updated.id),
+          name: updated.name,
+          description: updated.description,
+          pricePhp: Number(updated.pricePhp ?? updated.price_php ?? 0),
+          imageUrl: updated.imageUrl ?? updated.image_url ?? "",
+          categoryId: String(updated.categoryId ?? updated.category_id),
+          isFeatured: Boolean(updated.isFeatured ?? updated.is_featured),
+        };
+        setProducts((prev) =>
+          prev.map((p) => (p.id === mapped.id ? mapped : p))
+        );
+      }
+    } catch (error) {
+      console.error("Upsert product failed", error);
+      setBackendStatus("error");
+      setBackendErrorMessage(
+        "Unable to save product. Please verify that the BlooMery database/API is available."
+      );
+    }
   }
 
-  function handleDeleteProduct(id: string) {
-    setProducts((prev) => prev.filter((p) => p.id !== id));
+  async function handleDeleteProduct(id: string) {
+    try {
+      await apiDelete(`/api/products/${id}`);
+      setProducts((prev) => prev.filter((p) => p.id !== id));
+    } catch (error) {
+      console.error("Delete product failed", error);
+      setBackendStatus("error");
+      setBackendErrorMessage(
+        "Unable to delete product. Please verify that the BlooMery database/API is available."
+      );
+    }
   }
 
-  function handleUpdateSettings(next: AppearanceSettings) {
-    setSettings(next);
+  async function handleUpdateSettings(next: AppearanceSettings) {
+    try {
+      const updated = await apiPut<AppearanceSettings>("/api/settings", next);
+      setSettings(updated);
+    } catch (error) {
+      console.error("Update settings failed", error);
+      setBackendStatus("error");
+      setBackendErrorMessage(
+        "Unable to save appearance settings. Please verify that the BlooMery database/API is available."
+      );
+    }
   }
 
-  function handleUpdateContact(next: ContactInfo) {
-    setContact(next);
+  async function handleUpdateContact(next: ContactInfo) {
+    try {
+      const updated = await apiPut<ContactInfo>("/api/contact", next);
+      setContact(updated);
+    } catch (error) {
+      console.error("Update contact failed", error);
+      setBackendStatus("error");
+      setBackendErrorMessage(
+        "Unable to save contact information. Please verify that the BlooMery database/API is available."
+      );
+    }
   }
 
   const isAdmin = currentUser?.role === "admin";
 
+  // Fallback to design defaults if settings/contact have not loaded yet
+  const effectiveSettings: AppearanceSettings = settings ?? defaultSettings;
+  const effectiveContact: ContactInfo = contact ?? defaultContact;
+
   const heroBackground =
-    settings.backgroundStyle === "gradient"
+    effectiveSettings.backgroundStyle === "gradient"
       ? "bg-gradient-to-br from-rose-50 via-white to-pink-50"
       : "bg-rose-50";
 
@@ -415,6 +688,28 @@ export default function App() {
         heroBackground
       )}
     >
+      {backendStatus !== "ok" && (
+        <div
+          className={classNames(
+            "px-4 py-2 text-xs text-center",
+            backendStatus === "error"
+              ? "bg-rose-50 text-rose-700 border-b border-rose-200"
+              : "bg-amber-50 text-amber-700 border-b border-amber-200"
+          )}
+        >
+          {backendStatus === "checking"
+            ? "Connecting to BlooMery database/API…"
+            : backendErrorMessage ||
+              "The BlooMery database/API is not responding. Some actions may not work until it is online."}
+        </div>
+      )}
+
+      {backendStatus === "ok" && isLoadingData && (
+        <div className="px-4 py-1 text-[11px] text-center bg-slate-100 text-slate-600 border-b border-slate-200">
+          Loading latest data from the BlooMery database…
+        </div>
+      )}
+
       {!currentUser ? (
         <AuthScreen
           onLogin={handleLogin}
@@ -427,8 +722,8 @@ export default function App() {
             user={currentUser}
             isAdmin={isAdmin}
             onLogout={handleLogout}
-            heroTagline={settings.heroTagline}
-            contact={contact}
+            heroTagline={effectiveSettings.heroTagline}
+            contact={effectiveContact}
             activeCustomerPage={activeCustomerPage}
             onChangeCustomerPage={setActiveCustomerPage}
           />
@@ -440,8 +735,8 @@ export default function App() {
                 products={products}
                 categories={categories}
                 orders={orders}
-                settings={settings}
-                contact={contact}
+                settings={effectiveSettings}
+                contact={effectiveContact}
                 onUpsertProduct={handleUpsertProduct}
                 onDeleteProduct={handleDeleteProduct}
                 onUpsertCategory={handleUpsertCategory}
@@ -485,8 +780,12 @@ export default function App() {
 // --- Auth screen ---
 
 type AuthScreenProps = {
-  onLogin: (email: string, password: string) => void;
-  onRegisterCustomer: (name: string, email: string, password: string) => void;
+  onLogin: (email: string, password: string) => void | Promise<void>;
+  onRegisterCustomer: (
+    name: string,
+    email: string,
+    password: string
+  ) => void | Promise<void>;
   authError: string | null;
 };
 
@@ -1721,7 +2020,8 @@ function AdminProductsTab({
       return;
     }
     const product: Product = {
-      id: editing?.id ?? generateId("product"),
+      // Empty id means "create"; existing id means "update" (handled in App)
+      id: editing?.id ?? "",
       name: name.trim(),
       description: description.trim() || "Beautiful hand-arranged bouquet.",
       pricePhp: Math.round(numericPrice),
@@ -1952,7 +2252,8 @@ function AdminCategoriesTab({
     e.preventDefault();
     if (!name.trim()) return;
     const category: Category = {
-      id: editing?.id ?? generateId("category"),
+      // Empty id means "create"; existing id means "update" (handled in App)
+      id: editing?.id ?? "",
       name: name.trim(),
       description: description.trim() || undefined,
     };
