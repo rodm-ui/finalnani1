@@ -30,7 +30,7 @@ app.use(express.static(distPath));
 
 async function select(sql, params = []) {
 @@ -737,11 +749,9 @@ app.put("/api/contact", async (req, res) => {
-  }
+}
 });
 
 // Root route so hitting the server base URL returns something useful
